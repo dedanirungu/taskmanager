@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
+import { statusLabel } from '../lib/status.js';
 
 function fmt(iso) {
   if (!iso) return '—';
@@ -92,7 +93,7 @@ export default function TaskDetail() {
           <Link to="/" className="muted" style={{ fontSize: 12 }}>← back to board</Link>
           <h2 style={{ margin: '4px 0 0' }}>#{task.id} · {task.title}</h2>
           <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
-            <span className={`badge ${task.status}`}>{task.status}</span>
+            <span className={`badge ${task.status}`}>{statusLabel(task.status)}</span>
             <span style={{ marginLeft: 10 }}>{task.project_name}</span>
             {task.branch_name && <span className="mono" style={{ marginLeft: 10 }}>{task.branch_name}</span>}
             {task.assigned_to_username && <span style={{ marginLeft: 10 }}>· {task.assigned_to_username}</span>}
@@ -148,7 +149,7 @@ export default function TaskDetail() {
                   <span className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>{fmt(e.created_at)}</span>
                   {' — '}
                   <b>{e.event_type}</b>
-                  {e.to_status && <> → <span className={`badge ${e.to_status}`}>{e.to_status}</span></>}
+                  {e.to_status && <> → <span className={`badge ${e.to_status}`}>{statusLabel(e.to_status)}</span></>}
                   {e.actor && <span className="muted"> by {e.actor}</span>}
                   {e.metadata?.message && <div className="muted" style={{ fontSize: 12 }}>"{e.metadata.message}"</div>}
                   {e.metadata?.pr_url && <div style={{ fontSize: 12 }}><a href={e.metadata.pr_url} target="_blank" rel="noreferrer">PR</a></div>}
@@ -164,9 +165,9 @@ export default function TaskDetail() {
               <div><label>By</label><div>{task.created_by_username}</div></div>
               <div><label>Claimed</label><div className="mono" style={{ fontSize: 12 }}>{fmt(task.claimed_at)}</div></div>
               <div><label>Submitted</label><div className="mono" style={{ fontSize: 12 }}>{fmt(task.submitted_at)}</div></div>
-              <div><label>Merged</label><div className="mono" style={{ fontSize: 12 }}>{fmt(task.merged_at)}</div></div>
+              <div><label>Done</label><div className="mono" style={{ fontSize: 12 }}>{fmt(task.merged_at)}</div></div>
               <div><label>Time to submit</label><div>{duration(task.claimed_at, task.submitted_at) || '—'}</div></div>
-              <div><label>Time to merge</label><div>{duration(task.submitted_at, task.merged_at) || '—'}</div></div>
+              <div><label>Time to done</label><div>{duration(task.submitted_at, task.merged_at) || '—'}</div></div>
             </div>
           </div>
         </div>

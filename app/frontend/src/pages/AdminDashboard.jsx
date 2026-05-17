@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api.js';
+import { statusLabel } from '../lib/status.js';
 
 function fmtSeconds(s) {
   if (!s || s <= 0) return '—';
@@ -32,7 +33,7 @@ export default function AdminDashboard() {
         <Stat label="In progress"    value={sc.in_progress || 0} />
         <Stat label="Submitted"      value={sc.submitted || 0} />
         <Stat label="Awaiting review" value={sc.awaiting_review || 0} />
-        <Stat label="Merged"         value={sc.merged || 0} />
+        <Stat label="Done"           value={sc.merged || 0} />
         <Stat label="Closed"         value={sc.closed || 0} />
       </div>
 
@@ -40,7 +41,7 @@ export default function AdminDashboard() {
         <div className="panel">
           <h3 style={{ marginTop: 0 }}>Per project</h3>
           <table>
-            <thead><tr><th>Project</th><th>Open</th><th>WIP</th><th>Submitted</th><th>Review</th><th>Merged</th></tr></thead>
+            <thead><tr><th>Project</th><th>Open</th><th>WIP</th><th>Submitted</th><th>Review</th><th>Done</th></tr></thead>
             <tbody>
               {data.per_project.map((p) => (
                 <tr key={p.id}>
@@ -76,14 +77,14 @@ export default function AdminDashboard() {
         </div>
 
         <div className="panel">
-          <h3 style={{ marginTop: 0 }}>Durations (merged tasks)</h3>
+          <h3 style={{ marginTop: 0 }}>Durations (completed tasks)</h3>
           <div className="grid-2">
             <div>
               <label>Avg claim → submit</label>
               <div style={{ fontSize: 18 }}>{fmtSeconds(data.durations.avg_claim_to_submit_seconds)}</div>
             </div>
             <div>
-              <label>Avg submit → merge</label>
+              <label>Avg submit → done</label>
               <div style={{ fontSize: 18 }}>{fmtSeconds(data.durations.avg_submit_to_merge_seconds)}</div>
             </div>
             <div>
@@ -121,7 +122,7 @@ export default function AdminDashboard() {
                 <td className="mono" style={{ fontSize: 12 }}>{new Date(e.created_at).toISOString().slice(0, 19).replace('T', ' ')}</td>
                 <td><Link to={`/tasks/${e.task_id}`}>#{e.task_id} {e.task_title}</Link></td>
                 <td><code className="mono">{e.event_type}</code></td>
-                <td>{e.to_status && <span className={`badge ${e.to_status}`}>{e.to_status}</span>}</td>
+                <td>{e.to_status && <span className={`badge ${e.to_status}`}>{statusLabel(e.to_status)}</span>}</td>
                 <td>{e.actor || <span className="muted">—</span>}</td>
               </tr>
             ))}

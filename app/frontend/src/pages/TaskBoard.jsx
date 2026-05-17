@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
+import { statusLabel } from '../lib/status.js';
 
 // Build the SSO launch URL for whichever workspace is relevant for this task.
 // Only shown for active tasks (in_progress / submitted) where the launcher
@@ -75,7 +76,7 @@ export default function TaskBoard() {
             <option value="in_progress">In progress</option>
             <option value="submitted">Submitted</option>
             <option value="awaiting_review">Awaiting review</option>
-            <option value="merged">Merged</option>
+            <option value="merged">Done</option>
             <option value="closed">Closed</option>
           </select>
           {user.role === 'admin' && (
@@ -139,7 +140,7 @@ export default function TaskBoard() {
                   <div>{t.title}{t.comment_count > 0 && <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>💬 {t.comment_count}</span>}</div>
                   {t.description && <div className="muted" style={{ fontSize: 12 }}>{t.description.slice(0, 80)}{t.description.length > 80 ? '…' : ''}</div>}
                 </td>
-                <td><span className={`badge ${t.status}`}>{t.status}</span></td>
+                <td><span className={`badge ${t.status}`}>{statusLabel(t.status)}</span></td>
                 <td className="mono">{t.branch_name || '—'}</td>
                 <td>{t.assigned_to_username || <span className="muted">unassigned</span>}</td>
                 <td>{t.pr_url ? <a href={t.pr_url} target="_blank" rel="noreferrer">PR</a> : '—'}</td>
