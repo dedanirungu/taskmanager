@@ -136,8 +136,7 @@ export default function AdminWorkspaces() {
                 </table>
               )}
             <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-              ⚠ After adding/removing preview ports, the container is recreated and you must issue an SSL cert
-              for the new subdomain: <code className="mono">bash scripts/issue-certs.sh &lt;name&gt;-{w.subdomain}.{publicDomain}</code> then <code className="mono">bash scripts/render-nginx.sh</code>.
+              Adding a preview port recreates the container and triggers an automatic SSL cert + nginx reload (host cron picks up the trigger within ~1 minute).
             </div>
           </div>
         </div>
