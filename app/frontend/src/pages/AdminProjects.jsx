@@ -3,7 +3,7 @@ import { api } from '../lib/api.js';
 
 const blank = {
   name: '', github_repo: '', default_branch: 'main', description: '',
-  git_author_name: '', git_author_email: '',
+  git_author_name: '', git_author_email: '', github_token: '',
 };
 
 export default function AdminProjects() {
@@ -11,7 +11,7 @@ export default function AdminProjects() {
   const [err, setErr] = useState(null);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState(blank);
-  const [editing, setEditing] = useState(null); // project id being edited
+  const [editing, setEditing] = useState(null);
   const [editForm, setEditForm] = useState(blank);
 
   async function load() {
@@ -28,6 +28,7 @@ export default function AdminProjects() {
         ...form,
         git_author_name:  form.git_author_name.trim()  || null,
         git_author_email: form.git_author_email.trim() || null,
+        github_token:     form.github_token.trim()     || null,
       });
       setForm(blank); setCreating(false); load();
     } catch (e) { setErr(e.message); }
@@ -41,18 +42,25 @@ export default function AdminProjects() {
       description: p.description || '',
       git_author_name: p.git_author_name || '',
       git_author_email: p.git_author_email || '',
+      github_token: '',     // write-only; never echoed back
     });
   }
 
   async function save(id) {
     setErr(null);
     try {
-      await api.patch(`/api/admin/projects/${id}`, {
+      const body = {
         description: editForm.description,
         default_branch: editForm.default_branch,
         git_author_name:  editForm.git_author_name.trim()  || null,
         git_author_email: editForm.git_author_email.trim() || null,
-      });
+      };
+      // Only send token if user typed something (empty = leave unchanged).
+      // To clear an existing token, type the literal text "clear".
+      if (editForm.github_token === 'clear') body.github_token = '';
+      else if (editForm.github_token.trim()) body.github_token = editForm.github_token.trim();
+
+      await api.patch(`/api/admin/projects/${id}`, body);
       setEditing(null); load();
     } catch (e) { setErr(e.message); }
   }
@@ -79,12 +87,16 @@ export default function AdminProjects() {
             <div className="field"><label>Default branch</label><input value={form.default_branch} onChange={(e) => setForm({ ...form, default_branch: e.target.value })} /></div>
             <div className="field"><label>Description</label><input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
             <div className="field">
-              <label>Commit author name <span className="muted">(optional, used on this project's commits)</span></label>
-              <input placeholder="e.g. ClientA Bot" value={form.git_author_name} onChange={(e) => setForm({ ...form, git_author_name: e.target.value })} />
+              <label>Commit author name <span className="muted">(optional)</span></label>
+              <input placeholder="defaults to PLATFORM_GIT_NAME from .env" value={form.git_author_name} onChange={(e) => setForm({ ...form, git_author_name: e.target.value })} />
             </div>
             <div className="field">
               <label>Commit author email</label>
-              <input type="email" placeholder="bot@clientA.com" value={form.git_author_email} onChange={(e) => setForm({ ...form, git_author_email: e.target.value })} />
+              <input type="email" value={form.git_author_email} onChange={(e) => setForm({ ...form, git_author_email: e.target.value })} />
+            </div>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <label>GitHub PAT for this project <span className="muted">(optional — only if this repo is under a different GitHub account than the platform default)</span></label>
+              <input type="password" placeholder="github_pat_xxx" value={form.github_token} onChange={(e) => setForm({ ...form, github_token: e.target.value })} autoComplete="off" />
             </div>
           </div>
           <button className="primary" type="submit">Create</button>
@@ -93,9 +105,9 @@ export default function AdminProjects() {
 
       <div className="panel" style={{ padding: 0 }}>
         <table>
-          <thead><tr><th>Name</th><th>Repo</th><th>Branch</th><th>Commit author</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Repo</th><th>Branch</th><th>Commit author</th><th>PAT</th><th></th></tr></thead>
           <tbody>
-            {projects.length === 0 && <tr><td colSpan={5} className="muted" style={{ padding: 24, textAlign: 'center' }}>No projects yet.</td></tr>}
+            {projects.length === 0 && <tr><td colSpan={6} className="muted" style={{ padding: 24, textAlign: 'center' }}>No projects yet.</td></tr>}
             {projects.map((p) => (editing === p.id ? (
               <tr key={p.id}>
                 <td>{p.name} <div className="muted mono" style={{ fontSize: 11 }}>{p.slug}</div></td>
@@ -104,6 +116,15 @@ export default function AdminProjects() {
                 <td>
                   <input placeholder="name" value={editForm.git_author_name} onChange={(e) => setEditForm({ ...editForm, git_author_name: e.target.value })} />
                   <input style={{ marginTop: 4 }} placeholder="email" type="email" value={editForm.git_author_email} onChange={(e) => setEditForm({ ...editForm, git_author_email: e.target.value })} />
+                </td>
+                <td>
+                  <input
+                    type="password"
+                    placeholder={p.has_github_token ? '••• (leave blank = keep, "clear" = remove)' : 'github_pat_xxx'}
+                    value={editForm.github_token}
+                    onChange={(e) => setEditForm({ ...editForm, github_token: e.target.value })}
+                    autoComplete="off"
+                  />
                 </td>
                 <td style={{ textAlign: 'right' }}>
                   <button className="primary" onClick={() => save(p.id)}>Save</button>{' '}
@@ -118,7 +139,12 @@ export default function AdminProjects() {
                 <td>
                   {p.git_author_name
                     ? <span><b>{p.git_author_name}</b> <span className="muted">&lt;{p.git_author_email}&gt;</span></span>
-                    : <span className="muted">(uses developer identity)</span>}
+                    : <span className="muted">(platform default)</span>}
+                </td>
+                <td>
+                  {p.has_github_token
+                    ? <span className="badge submitted">project PAT</span>
+                    : <span className="muted" style={{ fontSize: 12 }}>platform PAT</span>}
                 </td>
                 <td style={{ textAlign: 'right' }}>
                   <button onClick={() => startEdit(p)}>Edit</button>{' '}

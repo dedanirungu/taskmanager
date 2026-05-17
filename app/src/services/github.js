@@ -36,12 +36,21 @@ export async function findOpenPrForBranch(repo, branch) {
   return data[0] || null;
 }
 
-// Builds the HTTPS clone URL with the platform's PAT embedded.
-// Used only when cloning *into* a developer container.
-export function authenticatedCloneUrl(repo) {
+// Builds the HTTPS clone URL with a PAT embedded.
+// Used only when cloning *into* a developer container or pushing from it.
+// Pass an override token for projects that live under a different GitHub
+// account than the platform default.
+export function authenticatedCloneUrl(repo, overrideToken = null) {
   const { owner, name } = parseRepo(repo);
+  const token = overrideToken || TOKEN;
+  if (!token) throw new Error(`no GitHub token available for ${repo}`);
   // PAT goes as the username; "x-oauth-basic" is a conventional placeholder password.
-  return `https://${TOKEN}:x-oauth-basic@github.com/${owner}/${name}.git`;
+  return `https://${token}:x-oauth-basic@github.com/${owner}/${name}.git`;
+}
+
+// Resolve the effective PAT for a project: per-project override → platform default.
+export function tokenForProject(project) {
+  return project?.github_token || TOKEN || null;
 }
 
 export function publicRepoUrl(repo) {

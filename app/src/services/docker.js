@@ -7,7 +7,7 @@
 import Docker from 'dockerode';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { authenticatedCloneUrl } from './github.js';
+import { authenticatedCloneUrl, tokenForProject } from './github.js';
 
 const docker = new Docker({
   socketPath: (process.env.DOCKER_HOST || 'unix:///var/run/docker.sock').replace('unix://', ''),
@@ -202,7 +202,7 @@ export async function execInContainer(containerName, command, { workDir, env = [
 // the developer might run in the terminal.
 export async function ensureProjectClonedInContainer(containerName, project) {
   const projectDir = `/home/coder/projects/${project.slug}`;
-  const cloneUrl = authenticatedCloneUrl(project.github_repo);
+  const cloneUrl = authenticatedCloneUrl(project.github_repo, tokenForProject(project));
 
   const check = await execInContainer(
     containerName,
@@ -279,7 +279,7 @@ export async function checkoutTaskBranch({ containerName, project, branchName })
 // even if the local config in the workspace drifted.
 export async function commitAndPush({ containerName, project, branchName, commitMessage }) {
   const projectDir = `/home/coder/projects/${project.slug}`;
-  const cloneUrl = authenticatedCloneUrl(project.github_repo);
+  const cloneUrl = authenticatedCloneUrl(project.github_repo, tokenForProject(project));
 
   const { name, email } = effectiveCommitIdentity(project);
   const identityFlags = `-c user.name=${JSON.stringify(name)} -c user.email=${JSON.stringify(email)}`;

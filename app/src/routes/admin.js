@@ -55,9 +55,12 @@ export default async function adminRoutes(app) {
   // ---------- Projects ----------
 
   app.get('/api/admin/projects', async () => {
+    // Never expose github_token; surface only whether one is set.
     const { rows } = await query(
       `SELECT id, name, slug, github_repo, default_branch, description,
-              git_author_name, git_author_email, created_at
+              git_author_name, git_author_email,
+              (github_token IS NOT NULL) AS has_github_token,
+              created_at
        FROM projects ORDER BY name`,
     );
     return { projects: rows };
@@ -67,6 +70,7 @@ export default async function adminRoutes(app) {
     const {
       name, github_repo, default_branch = 'main', description = null,
       git_author_name = null, git_author_email = null,
+      github_token = null,
     } = req.body || {};
     if (!name || !github_repo) {
       return reply.code(400).send({ error: 'name and github_repo required' });
@@ -77,11 +81,16 @@ export default async function adminRoutes(app) {
     const slug = slugify(name);
     try {
       const { rows } = await query(
-        `INSERT INTO projects (name, slug, github_repo, default_branch, description, git_author_name, git_author_email)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [name, slug, github_repo, default_branch, description, git_author_name, git_author_email],
+        `INSERT INTO projects (name, slug, github_repo, default_branch, description,
+                               git_author_name, git_author_email, github_token)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, slug`,
+        [name, slug, github_repo, default_branch, description, git_author_name, git_author_email, github_token || null],
       );
-      await audit({ actorId: req.user.id, action: 'project.create', target: `project:${rows[0].id}`, payload: rows[0] });
+      await audit({
+        actorId: req.user.id, action: 'project.create',
+        target: `project:${rows[0].id}`,
+        payload: { name, slug, github_repo, has_github_token: !!github_token },
+      });
       return { project: rows[0] };
     } catch (err) {
       if (err.code === '23505') return reply.code(409).send({ error: 'project already exists' });
@@ -91,7 +100,7 @@ export default async function adminRoutes(app) {
 
   app.patch('/api/admin/projects/:id', async (req, reply) => {
     const id = Number(req.params.id);
-    const { description, default_branch, git_author_name, git_author_email } = req.body || {};
+    const { description, default_branch, git_author_name, git_author_email, github_token } = req.body || {};
 
     if ((git_author_name && !git_author_email) || (git_author_email && !git_author_name)) {
       return reply.code(400).send({ error: 'set both git_author_name and git_author_email or neither' });
@@ -105,16 +114,23 @@ export default async function adminRoutes(app) {
     if (default_branch !== undefined)   push('default_branch', default_branch);
     if (git_author_name !== undefined)  push('git_author_name', git_author_name);
     if (git_author_email !== undefined) push('git_author_email', git_author_email);
+    // Special sentinel: client sends empty string to clear the token; missing key = unchanged.
+    if (github_token !== undefined)     push('github_token', github_token || null);
 
     if (!fields.length) return { ok: true };
 
     params.push(id);
     const { rows } = await query(
-      `UPDATE projects SET ${fields.join(', ')} WHERE id = $${params.length} RETURNING *`,
+      `UPDATE projects SET ${fields.join(', ')} WHERE id = $${params.length}
+       RETURNING id, name, slug, default_branch, git_author_name, git_author_email,
+                 (github_token IS NOT NULL) AS has_github_token`,
       params,
     );
     if (!rows[0]) return reply.code(404).send({ error: 'not found' });
-    await audit({ actorId: req.user.id, action: 'project.update', target: `project:${id}`, payload: req.body });
+    await audit({
+      actorId: req.user.id, action: 'project.update', target: `project:${id}`,
+      payload: { keys: Object.keys(req.body), token_changed: github_token !== undefined },
+    });
     return { project: rows[0] };
   });
 
