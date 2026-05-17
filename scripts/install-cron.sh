@@ -29,7 +29,9 @@ EOF
 chmod +x "$WRAPPER"
 
 LINE="*/20 * * * * $WRAPPER >> /var/log/devplatform/conflict-check.log 2>&1"
-( crontab -l 2>/dev/null | grep -v 'run-conflict-check.sh' ; echo "$LINE" ) | crontab -
+EXISTING="$(crontab -l 2>/dev/null || true)"
+FILTERED="$(echo "$EXISTING" | grep -v 'run-conflict-check.sh' || true)"
+printf '%s\n%s\n' "$FILTERED" "$LINE" | grep -v '^$' | crontab -
 
 echo "Installed cron entry:"
-crontab -l | grep run-conflict-check.sh
+crontab -l | grep run-conflict-check.sh || echo "(install failed)"
