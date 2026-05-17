@@ -3,6 +3,18 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 
+// Build the SSO launch URL for whichever workspace is relevant for this task.
+// Only shown for active tasks (in_progress / submitted) where the launcher
+// is meaningful.  Returns null otherwise.
+function ideLaunchUrl(task, user) {
+  if (!['in_progress', 'submitted'].includes(task.status)) return null;
+  if (task.assigned_to === user.id) return '/api/me/workspace/launch';
+  if (user.role === 'admin' && task.assignee_workspace_id) {
+    return `/api/admin/workspaces/${task.assignee_workspace_id}/launch`;
+  }
+  return null;
+}
+
 export default function TaskBoard() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -131,10 +143,16 @@ export default function TaskBoard() {
                 <td className="mono">{t.branch_name || '—'}</td>
                 <td>{t.assigned_to_username || <span className="muted">unassigned</span>}</td>
                 <td>{t.pr_url ? <a href={t.pr_url} target="_blank" rel="noreferrer">PR</a> : '—'}</td>
-                <td style={{ textAlign: 'right' }}>
+                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                   {t.status === 'open' && <button onClick={(e) => { e.stopPropagation(); claim(t); }}>Claim</button>}
+                  {ideLaunchUrl(t, user) && (
+                    <a href={ideLaunchUrl(t, user)} target="_blank" rel="noreferrer"
+                       onClick={(e) => e.stopPropagation()} style={{ marginRight: 8 }}>
+                      <button type="button" className="primary">IDE →</button>
+                    </a>
+                  )}
                   {(t.status === 'in_progress' || t.status === 'submitted' || t.status === 'awaiting_review') && (
-                    <Link to={`/tasks/${t.id}`} onClick={(e) => e.stopPropagation()}>Open →</Link>
+                    <Link to={`/tasks/${t.id}`} onClick={(e) => e.stopPropagation()}>Details</Link>
                   )}
                 </td>
               </tr>

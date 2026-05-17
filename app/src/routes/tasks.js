@@ -33,10 +33,13 @@ export default async function taskRoutes(app) {
              p.slug AS project_slug,
              p.github_repo,
              u.username AS assigned_to_username,
+             w.id        AS assignee_workspace_id,
+             w.subdomain AS assignee_workspace_subdomain,
              (SELECT COUNT(*)::int FROM task_comments WHERE task_id = t.id) AS comment_count
       FROM tasks t
       JOIN projects p ON p.id = t.project_id
       LEFT JOIN users u ON u.id = t.assigned_to
+      LEFT JOIN workspaces w ON w.user_id = t.assigned_to
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY t.created_at DESC
     `;
