@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import { query, withTx } from '../db/pool.js';
 import { requireAdmin } from '../middleware/auth.js';
@@ -10,6 +12,21 @@ function httpError(statusCode, message) {
   const err = new Error(message);
   err.statusCode = statusCode;
   return err;
+}
+
+// Drop a one-line trigger file in TRIGGERS_DIR. The host's cron watches
+// this directory and runs issue-certs.sh + render-nginx.sh for the domain.
+const TRIGGERS_DIR = process.env.TRIGGERS_DIR
+  || path.join(process.env.WORKSPACE_ROOT || '/srv/devplatform/workspaces', '..', 'triggers');
+
+async function writeCertTrigger(domain) {
+  try {
+    await fs.mkdir(TRIGGERS_DIR, { recursive: true });
+    const file = path.join(TRIGGERS_DIR, `${domain}.req`);
+    await fs.writeFile(file, domain + '\n', { mode: 0o644 });
+  } catch (err) {
+    console.warn('[trigger] failed to write cert trigger for', domain, err.message);
+  }
 }
 
 const WS_PORT_MIN = Number(process.env.WORKSPACE_PORT_MIN || 8081);
@@ -157,15 +174,25 @@ export default async function adminRoutes(app) {
   });
 
   app.post('/api/admin/users', async (req, reply) => {
-    const { username, password, email, role = 'developer', access_scope = 'scoped', project_ids = [] } = req.body || {};
+    const {
+      username, password, email,
+      role = 'developer',
+      access_scope = 'scoped',
+      project_ids = [],
+      // If true (default for developers), provision the workspace container
+      // and write a trigger file for cert+nginx in the same request.
+      provision_workspace = role === 'developer',
+      workspace_subdomain,
+    } = req.body || {};
     if (!username || !password) return reply.code(400).send({ error: 'username and password required' });
     if (!['admin', 'developer'].includes(role)) return reply.code(400).send({ error: 'invalid role' });
     if (!['all', 'scoped'].includes(access_scope)) return reply.code(400).send({ error: 'invalid access_scope' });
 
     const hash = await bcrypt.hash(password, 12);
 
+    let user;
     try {
-      const user = await withTx(async (client) => {
+      user = await withTx(async (client) => {
         const { rows } = await client.query(
           `INSERT INTO users (username, password_hash, email, role, access_scope)
            VALUES ($1, $2, $3, $4, $5) RETURNING id, username, email, role, access_scope, created_at`,
@@ -183,14 +210,70 @@ export default async function adminRoutes(app) {
         }
         return u;
       });
-
-      await audit({ actorId: req.user.id, action: 'user.create', target: `user:${user.id}`, payload: { role, access_scope } });
-      return { user };
     } catch (err) {
       if (err.code === '23505') return reply.code(409).send({ error: 'username already exists' });
       throw err;
     }
+
+    await audit({ actorId: req.user.id, action: 'user.create', target: `user:${user.id}`, payload: { role, access_scope, provision_workspace } });
+
+    let workspace = null;
+    let workspace_error = null;
+    if (provision_workspace) {
+      try {
+        workspace = await provisionWorkspaceForUser({
+          user, subdomain: workspace_subdomain, actorId: req.user.id,
+        });
+      } catch (err) {
+        // User was created OK; just report the workspace failure so the admin can retry.
+        workspace_error = err.message;
+      }
+    }
+
+    return { user, workspace, workspace_error };
   });
+
+  // Shared with POST /api/admin/workspaces below — extracted so user creation can call it inline.
+  async function provisionWorkspaceForUser({ user, subdomain, actorId }) {
+    const sub = subdomain || `dev${user.id}`;
+    const containerName = `${sub}-workspace`;
+    const password = randomPassword();
+
+    const ws = await withTx(async (client) => {
+      const { rows: existing } = await client.query(
+        `SELECT host_port FROM workspaces WHERE user_id = $1`,
+        [user.id],
+      );
+      const hostPort = existing[0]?.host_port || (await allocateHostPort(client));
+
+      const { rows } = await client.query(
+        `INSERT INTO workspaces (user_id, container_name, subdomain, ide_password, host_port, status)
+         VALUES ($1, $2, $3, $4, $5, 'stopped')
+         ON CONFLICT (user_id) DO UPDATE
+           SET subdomain      = EXCLUDED.subdomain,
+               container_name = EXCLUDED.container_name,
+               ide_password   = EXCLUDED.ide_password,
+               host_port      = COALESCE(workspaces.host_port, EXCLUDED.host_port)
+         RETURNING *`,
+        [user.id, containerName, sub, password, hostPort],
+      );
+      return rows[0];
+    });
+
+    await recreateWorkspaceContainer(ws);
+    await query(`UPDATE workspaces SET status = 'running' WHERE id = $1`, [ws.id]);
+    await audit({ actorId, action: 'workspace.create', target: `workspace:${ws.id}` });
+    await writeCertTrigger(`${ws.subdomain}.${process.env.PUBLIC_DOMAIN}`);
+
+    const previews = await loadPreviews(ws.id);
+    return {
+      ...ws,
+      status: 'running',
+      url: `https://${ws.subdomain}.${process.env.PUBLIC_DOMAIN}`,
+      nginx_upstream: `127.0.0.1:${ws.host_port}`,
+      previews,
+    };
+  }
 
   app.patch('/api/admin/users/:id', async (req, reply) => {
     const id = Number(req.params.id);
@@ -247,47 +330,10 @@ export default async function adminRoutes(app) {
     const user = userRows[0];
     if (!user) return reply.code(404).send({ error: 'user not found' });
 
-    const sub = subdomain || `dev${user.id}`;
-    const containerName = `${sub}-workspace`;
-    const password = randomPassword();
-
-    const workspace = await withTx(async (client) => {
-      // Reuse the existing port if the workspace already exists; otherwise allocate.
-      const { rows: existing } = await client.query(
-        `SELECT host_port FROM workspaces WHERE user_id = $1`,
-        [user_id],
-      );
-      const hostPort = existing[0]?.host_port || (await allocateHostPort(client));
-
-      const { rows } = await client.query(
-        `INSERT INTO workspaces (user_id, container_name, subdomain, ide_password, host_port, status)
-         VALUES ($1, $2, $3, $4, $5, 'stopped')
-         ON CONFLICT (user_id) DO UPDATE
-           SET subdomain      = EXCLUDED.subdomain,
-               container_name = EXCLUDED.container_name,
-               ide_password   = EXCLUDED.ide_password,
-               host_port      = COALESCE(workspaces.host_port, EXCLUDED.host_port)
-         RETURNING *`,
-        [user_id, containerName, sub, password, hostPort],
-      );
-      return rows[0];
+    const workspace = await provisionWorkspaceForUser({
+      user, subdomain, actorId: req.user.id,
     });
-
-    await recreateWorkspaceContainer(workspace);
-
-    await query(`UPDATE workspaces SET status = 'running' WHERE id = $1`, [workspace.id]);
-    await audit({ actorId: req.user.id, action: 'workspace.create', target: `workspace:${workspace.id}` });
-
-    const previews = await loadPreviews(workspace.id);
-    return {
-      workspace: {
-        ...workspace,
-        status: 'running',
-        url: `https://${workspace.subdomain}.${process.env.PUBLIC_DOMAIN}`,
-        nginx_upstream: `127.0.0.1:${workspace.host_port}`,
-        previews,
-      },
-    };
+    return { workspace };
   });
 
   app.get('/api/admin/workspaces', async () => {
@@ -335,6 +381,7 @@ export default async function adminRoutes(app) {
 
       // Recreate the container with the new port bindings.
       await recreateWorkspaceContainer(result.workspace);
+      await writeCertTrigger(`${name}-${result.workspace.subdomain}.${process.env.PUBLIC_DOMAIN}`);
       await audit({ actorId: req.user.id, action: 'workspace.preview.add', target: `workspace:${wsId}`, payload: { name, internal_port: port } });
       return { ok: true };
     } catch (err) {

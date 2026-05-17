@@ -28,10 +28,12 @@ exec /usr/bin/node "$APP_DIR/scripts/conflict-check.js"
 EOF
 chmod +x "$WRAPPER"
 
-LINE="*/20 * * * * $WRAPPER >> /var/log/devplatform/conflict-check.log 2>&1"
-EXISTING="$(crontab -l 2>/dev/null || true)"
-FILTERED="$(echo "$EXISTING" | grep -v 'run-conflict-check.sh' || true)"
-printf '%s\n%s\n' "$FILTERED" "$LINE" | grep -v '^$' | crontab -
+CONFLICT_LINE="*/20 * * * * $WRAPPER >> /var/log/devplatform/conflict-check.log 2>&1"
+TRIGGER_LINE="* * * * * APP_DIR=$APP_DIR bash $APP_DIR/scripts/process-triggers.sh >> /var/log/devplatform/triggers.log 2>&1"
 
-echo "Installed cron entry:"
-crontab -l | grep run-conflict-check.sh || echo "(install failed)"
+EXISTING="$(crontab -l 2>/dev/null || true)"
+FILTERED="$(echo "$EXISTING" | grep -v -e 'run-conflict-check.sh' -e 'process-triggers.sh' || true)"
+printf '%s\n%s\n%s\n' "$FILTERED" "$CONFLICT_LINE" "$TRIGGER_LINE" | grep -v '^$' | crontab -
+
+echo "Installed cron entries:"
+crontab -l | grep -E 'run-conflict-check.sh|process-triggers.sh' || echo "(install failed)"

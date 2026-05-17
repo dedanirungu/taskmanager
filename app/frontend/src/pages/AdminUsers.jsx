@@ -4,6 +4,8 @@ import { api } from '../lib/api.js';
 const newBlank = {
   username: '', password: '', email: '',
   role: 'developer', access_scope: 'scoped', project_ids: [],
+  provision_workspace: true,
+  workspace_subdomain: '',
 };
 
 const editBlank = {
@@ -20,6 +22,7 @@ export default function AdminUsers() {
   const [form, setForm] = useState(newBlank);
   const [editing, setEditing] = useState(null);
   const [editForm, setEditForm] = useState(editBlank);
+  const [created, setCreated] = useState(null); // result of last successful creation
 
   async function load() {
     try {
@@ -31,15 +34,24 @@ export default function AdminUsers() {
 
   async function create(e) {
     e.preventDefault();
-    setErr(null); setMsg(null);
+    setErr(null); setMsg(null); setCreated(null);
     try {
-      await api.post('/api/admin/users', {
-        ...form,
-        project_ids: form.project_ids.map(Number),
-      });
+      const body = {
+        username: form.username,
+        password: form.password,
+        email: form.email || null,
+        role: form.role,
+        access_scope: form.access_scope,
+        project_ids: form.access_scope === 'scoped' ? form.project_ids.map(Number) : [],
+        provision_workspace: form.provision_workspace && form.role === 'developer',
+      };
+      if (form.workspace_subdomain) body.workspace_subdomain = form.workspace_subdomain;
+      const result = await api.post('/api/admin/users', body);
+      // Stash for the success panel; remember the plaintext password we just used.
+      setCreated({ ...result, plaintext_password: form.password });
       setForm(newBlank);
       setCreating(false);
-      load();
+      await load();
     } catch (e) { setErr(e.message); }
   }
 
@@ -64,11 +76,7 @@ export default function AdminUsers() {
         access_scope: editForm.access_scope,
       };
       if (editForm.password.trim()) body.password = editForm.password.trim();
-      if (editForm.access_scope === 'scoped') {
-        body.project_ids = editForm.project_ids.map(Number);
-      } else {
-        body.project_ids = [];   // clear when scope is 'all'
-      }
+      body.project_ids = editForm.access_scope === 'scoped' ? editForm.project_ids.map(Number) : [];
       await api.patch(`/api/admin/users/${u.id}`, body);
       setEditing(null);
       setMsg(`Updated ${u.username}` + (editForm.password ? ' (password changed)' : ''));
@@ -103,17 +111,19 @@ export default function AdminUsers() {
     <>
       <div className="page-header">
         <h2>Users</h2>
-        <button className="primary" onClick={() => setCreating((v) => !v)}>{creating ? 'Cancel' : '+ New user'}</button>
+        <button className="primary" onClick={() => { setCreating((v) => !v); setCreated(null); }}>{creating ? 'Cancel' : '+ New user'}</button>
       </div>
       {err && <div className="error">{err}</div>}
       {msg && <div className="ok">{msg}</div>}
+
+      {created && <CreatedPanel result={created} onDismiss={() => setCreated(null)} />}
 
       {creating && (
         <form className="panel" onSubmit={create}>
           <div className="grid-2">
             <div className="field"><label>Username</label><input required value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></div>
             <div className="field"><label>Password</label><input required type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} autoComplete="new-password" /></div>
-            <div className="field"><label>Email (for git commits)</label><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+            <div className="field"><label>Email <span className="muted">(optional)</span></label><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
             <div className="field">
               <label>Role</label>
               <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
@@ -128,7 +138,14 @@ export default function AdminUsers() {
                 <option value="all">all projects</option>
               </select>
             </div>
+            {form.role === 'developer' && (
+              <div className="field">
+                <label>Workspace subdomain <span className="muted">(optional — defaults to dev&lt;id&gt;)</span></label>
+                <input placeholder="e.g. alice" value={form.workspace_subdomain} onChange={(e) => setForm({ ...form, workspace_subdomain: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })} />
+              </div>
+            )}
           </div>
+
           {form.access_scope === 'scoped' && (
             <div className="field">
               <label>Assigned projects</label>
@@ -143,6 +160,21 @@ export default function AdminUsers() {
               ))}
             </div>
           )}
+
+          {form.role === 'developer' && (
+            <div className="field">
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" style={{ width: 'auto' }}
+                  checked={form.provision_workspace}
+                  onChange={(e) => setForm({ ...form, provision_workspace: e.target.checked })} />
+                <span>Provision workspace + issue SSL cert immediately</span>
+              </label>
+              <div className="muted" style={{ fontSize: 12, marginLeft: 24 }}>
+                Creates the code-server container, allocates a host port, and (within ~1 minute) issues a Let's Encrypt cert + reloads nginx for the subdomain.
+              </div>
+            </div>
+          )}
+
           <button className="primary" type="submit">Create</button>
         </form>
       )}
@@ -217,5 +249,65 @@ export default function AdminUsers() {
         </table>
       </div>
     </>
+  );
+}
+
+function copy(text, setFlash) {
+  navigator.clipboard.writeText(text).then(() => {
+    setFlash(true);
+    setTimeout(() => setFlash(false), 1200);
+  });
+}
+
+function CopyableRow({ label, value, mono = true }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="field">
+      <label>{label}</label>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        {mono ? <code className="mono">{value}</code> : <span>{value}</span>}
+        <button className="ghost" type="button" onClick={() => copy(value, setCopied)}>{copied ? 'Copied!' : 'Copy'}</button>
+      </div>
+    </div>
+  );
+}
+
+function CreatedPanel({ result, onDismiss }) {
+  const { user, workspace, workspace_error, plaintext_password } = result;
+  return (
+    <div className="panel" style={{ borderColor: 'var(--ok)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <h3 style={{ marginTop: 0 }}>✓ Created {user.username}</h3>
+        <button className="ghost" onClick={onDismiss}>Dismiss</button>
+      </div>
+
+      <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+        Save these now — the password and IDE password are only shown once.
+      </p>
+
+      <CopyableRow label="Platform login — username" value={user.username} />
+      <CopyableRow label="Platform login — password" value={plaintext_password} />
+
+      {workspace && (
+        <>
+          <hr style={{ borderColor: 'var(--border)', margin: '14px 0' }} />
+          <h4 style={{ margin: '0 0 8px' }}>Workspace</h4>
+          <CopyableRow label="IDE URL" value={workspace.url} />
+          <CopyableRow label="IDE password" value={workspace.ide_password} />
+          <CopyableRow label="Container" value={workspace.container_name} />
+          <CopyableRow label="Host port (for nginx)" value={`127.0.0.1:${workspace.host_port}`} />
+          <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+            SSL cert + nginx config: <b>automatic within ~1 minute</b> (host-side cron picks up the trigger file).
+            If the URL still 404s after 2 minutes, run: <code className="mono">ssh root@&lt;vps&gt; 'cat /var/log/devplatform/triggers.log'</code>.
+          </div>
+        </>
+      )}
+
+      {workspace_error && (
+        <div className="error" style={{ marginTop: 12 }}>
+          User was created but workspace provisioning failed: {workspace_error}
+        </div>
+      )}
+    </div>
   );
 }

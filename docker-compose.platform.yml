@@ -51,11 +51,13 @@ services:
       # a code-server container, docker can resolve the path on the host.
       WORKSPACE_ROOT: ${APP_HOST_DIR:-/srv/devplatform}/workspaces
       CONFLICT_CHECK_ROOT: ${APP_HOST_DIR:-/srv/devplatform}/conflict-check
+      TRIGGERS_DIR: ${APP_HOST_DIR:-/srv/devplatform}/triggers
       DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${APP_HOST_DIR:-/srv/devplatform}/workspaces:${APP_HOST_DIR:-/srv/devplatform}/workspaces
       - ${APP_HOST_DIR:-/srv/devplatform}/conflict-check:${APP_HOST_DIR:-/srv/devplatform}/conflict-check
+      - ${APP_HOST_DIR:-/srv/devplatform}/triggers:${APP_HOST_DIR:-/srv/devplatform}/triggers
     ports:
       - "127.0.0.1:3000:3000"
 
