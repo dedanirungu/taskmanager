@@ -27,7 +27,7 @@ export default function MyWorkspace() {
       <div className="page-header"><h2>My workspace</h2></div>
       <div className="panel">
         <div className="field">
-          <label>URL</label>
+          <label>IDE URL</label>
           <div><a href={ws.url} target="_blank" rel="noreferrer">{ws.url}</a></div>
         </div>
         <div className="field">
@@ -47,11 +47,41 @@ export default function MyWorkspace() {
             <Link to={`/tasks/${ws.current_task_id}`}>#{ws.current_task_id} →</Link>
           </div>
         )}
-        <p className="muted" style={{ fontSize: 13 }}>
-          When you open the workspace, log in with the password above. Run <code className="mono">claude</code> in the
-          terminal to start the Claude Code CLI — sign in with <em>your own</em> Claude Pro account the first time.
+      </div>
+
+      <div className="panel">
+        <h3 style={{ marginTop: 0 }}>Preview URLs</h3>
+        {(!ws.previews || ws.previews.length === 0) && (
+          <div className="muted">
+            No preview URLs configured for you yet. Ask the admin to add one with the port your app listens on
+            (e.g. <code className="mono">app → 3000</code> for next/react, <code className="mono">app → 5173</code> for vite).
+          </div>
+        )}
+        {(ws.previews || []).length > 0 && (
+          <table>
+            <thead><tr><th>Name</th><th>URL</th><th>Run your app on</th></tr></thead>
+            <tbody>
+              {ws.previews.map((p) => (
+                <tr key={p.id}>
+                  <td className="mono">{p.name}</td>
+                  <td><a href={p.url} target="_blank" rel="noreferrer">{p.url}</a></td>
+                  <td className="mono">0.0.0.0:{p.internal_port}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+          When you start your dev server, make sure it binds to <code className="mono">0.0.0.0</code> (not <code className="mono">localhost</code>)
+          on the port shown — otherwise the host can't reach it. For example:<br />
+          <code className="mono">npm run dev -- --host 0.0.0.0</code> (vite), or set <code className="mono">HOST=0.0.0.0</code> for many node servers.
         </p>
       </div>
+
+      <p className="muted" style={{ fontSize: 13 }}>
+        Run <code className="mono">claude</code> in the workspace terminal to start the Claude Code CLI — sign in with
+        <em> your own </em> Claude Pro account the first time.
+      </p>
     </>
   );
 }

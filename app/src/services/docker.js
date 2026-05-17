@@ -26,6 +26,9 @@ export async function ensureWorkspaceDirs(subdomain) {
   }
 }
 
+// previews: [{ name, internal_port, host_port }]
+//   8080 (IDE) is always exposed at hostPort. Each preview adds another
+//   loopback binding host_port → internal_port.
 export async function createOrStartWorkspaceContainer({
   containerName,
   subdomain,
@@ -33,21 +36,32 @@ export async function createOrStartWorkspaceContainer({
   gitName,
   gitEmail,
   hostPort,
+  previews = [],
 }) {
   if (!hostPort) throw new Error('hostPort required');
   await ensureWorkspaceDirs(subdomain);
 
-  let container;
+  const desired = buildPortBindings(hostPort, previews);
+
   try {
-    container = docker.getContainer(containerName);
+    const container = docker.getContainer(containerName);
     const info = await container.inspect();
-    if (!info.State.Running) await container.start();
-    return container;
+    const existing = info.HostConfig?.PortBindings || {};
+
+    if (portBindingsEqual(existing, desired)) {
+      if (!info.State.Running) await container.start();
+      return container;
+    }
+
+    // Port set changed — must recreate (PortBindings are immutable post-create).
+    console.log(`[docker] preview ports changed for ${containerName}, recreating`);
+    if (info.State.Running) await container.stop({ t: 10 });
+    await container.remove();
   } catch (err) {
     if (err.statusCode !== 404) throw err;
   }
 
-  container = await docker.createContainer({
+  const container = await docker.createContainer({
     Image: CODE_SERVER_IMAGE,
     name: containerName,
     Env: [
@@ -62,12 +76,10 @@ export async function createOrStartWorkspaceContainer({
         `${workspaceHostPath(subdomain, 'config')}:/home/coder/.config`,
         `${workspaceHostPath(subdomain, 'claude')}:/home/coder/.claude`,
       ],
-      // Bind to loopback only — host nginx is the only thing that should reach this.
-      PortBindings: {
-        '8080/tcp': [{ HostIp: '127.0.0.1', HostPort: String(hostPort) }],
-      },
+      // Loopback-only — host nginx is the only thing that should reach these.
+      PortBindings: desired,
     },
-    ExposedPorts: { '8080/tcp': {} },
+    ExposedPorts: Object.fromEntries(Object.keys(desired).map((k) => [k, {}])),
     Labels: {
       'devplatform.role': 'workspace',
       'devplatform.subdomain': subdomain,
@@ -76,6 +88,30 @@ export async function createOrStartWorkspaceContainer({
 
   await container.start();
   return container;
+}
+
+function buildPortBindings(idePort, previews) {
+  const out = {
+    '8080/tcp': [{ HostIp: '127.0.0.1', HostPort: String(idePort) }],
+  };
+  for (const p of previews) {
+    out[`${p.internal_port}/tcp`] = [{ HostIp: '127.0.0.1', HostPort: String(p.host_port) }];
+  }
+  return out;
+}
+
+function portBindingsEqual(a, b) {
+  const ak = Object.keys(a).sort();
+  const bk = Object.keys(b).sort();
+  if (ak.length !== bk.length) return false;
+  for (let i = 0; i < ak.length; i++) {
+    if (ak[i] !== bk[i]) return false;
+    const av = (a[ak[i]] || [])[0] || {};
+    const bv = (b[bk[i]] || [])[0] || {};
+    if (String(av.HostPort) !== String(bv.HostPort)) return false;
+    if (String(av.HostIp || '') !== String(bv.HostIp || '')) return false;
+  }
+  return true;
 }
 
 export async function stopWorkspaceContainer(containerName) {

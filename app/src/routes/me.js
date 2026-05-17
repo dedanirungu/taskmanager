@@ -12,10 +12,20 @@ export default async function meRoutes(app) {
     );
     const ws = rows[0];
     if (!ws) return reply.code(404).send({ error: 'no workspace yet' });
+
+    const { rows: previews } = await query(
+      `SELECT id, name, internal_port FROM workspace_previews
+       WHERE workspace_id = $1 ORDER BY name`,
+      [ws.id],
+    );
     return {
       workspace: {
         ...ws,
         url: `https://${ws.subdomain}.${process.env.PUBLIC_DOMAIN}`,
+        previews: previews.map((p) => ({
+          ...p,
+          url: `https://${p.name}-${ws.subdomain}.${process.env.PUBLIC_DOMAIN}`,
+        })),
       },
     };
   });

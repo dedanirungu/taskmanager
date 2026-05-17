@@ -1,0 +1,39 @@
+# Preview-port subdomain for a developer's running app.
+# Substitute ${NAME}, ${SUBDOMAIN}, ${PUBLIC_DOMAIN}, ${HOST_PORT} when rendering.
+#  - ${NAME}          e.g. "app", "api", "frontend"
+#  - ${SUBDOMAIN}     e.g. "dev1"
+#  - ${PUBLIC_DOMAIN} e.g. "178.105.122.232.sslip.io"
+#  - ${HOST_PORT}     e.g. "8201"  (allocated by the platform; see Admin → Workspaces)
+#
+# Final hostname:  ${NAME}-${SUBDOMAIN}.${PUBLIC_DOMAIN}
+# Final upstream:  127.0.0.1:${HOST_PORT}
+
+server {
+    listen 80;
+    server_name ${NAME}-${SUBDOMAIN}.${PUBLIC_DOMAIN};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${NAME}-${SUBDOMAIN}.${PUBLIC_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${NAME}-${SUBDOMAIN}.${PUBLIC_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${NAME}-${SUBDOMAIN}.${PUBLIC_DOMAIN}/privkey.pem;
+
+    client_max_body_size 50m;
+
+    location / {
+        proxy_pass         http://127.0.0.1:${HOST_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        # Websockets / HMR
+        proxy_set_header   Upgrade           $http_upgrade;
+        proxy_set_header   Connection        "upgrade";
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+}

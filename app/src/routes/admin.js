@@ -6,8 +6,16 @@ import { slugify } from '../util/slug.js';
 import { randomPassword } from '../util/random.js';
 import { createOrStartWorkspaceContainer, stopWorkspaceContainer, removeWorkspaceContainer } from '../services/docker.js';
 
+function httpError(statusCode, message) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
 const WS_PORT_MIN = Number(process.env.WORKSPACE_PORT_MIN || 8081);
 const WS_PORT_MAX = Number(process.env.WORKSPACE_PORT_MAX || 8199);
+const PREVIEW_PORT_MIN = Number(process.env.PREVIEW_PORT_MIN || 8201);
+const PREVIEW_PORT_MAX = Number(process.env.PREVIEW_PORT_MAX || 8499);
 
 async function allocateHostPort(client) {
   const { rows } = await client.query(
@@ -18,6 +26,27 @@ async function allocateHostPort(client) {
     if (!taken.has(p)) return p;
   }
   throw new Error(`no free workspace port in ${WS_PORT_MIN}..${WS_PORT_MAX}`);
+}
+
+async function allocatePreviewHostPort(client) {
+  const { rows } = await client.query(
+    `SELECT host_port FROM workspace_previews ORDER BY host_port`,
+  );
+  const taken = new Set(rows.map((r) => r.host_port));
+  for (let p = PREVIEW_PORT_MIN; p <= PREVIEW_PORT_MAX; p++) {
+    if (!taken.has(p)) return p;
+  }
+  throw new Error(`no free preview port in ${PREVIEW_PORT_MIN}..${PREVIEW_PORT_MAX}`);
+}
+
+async function loadPreviews(workspaceId, client) {
+  const q = client || { query };
+  const { rows } = await q.query(
+    `SELECT id, name, internal_port, host_port FROM workspace_previews
+     WHERE workspace_id = $1 ORDER BY name`,
+    [workspaceId],
+  );
+  return rows;
 }
 
 export default async function adminRoutes(app) {
@@ -228,35 +257,91 @@ export default async function adminRoutes(app) {
       return rows[0];
     });
 
-    await createOrStartWorkspaceContainer({
-      containerName: workspace.container_name,
-      subdomain: workspace.subdomain,
-      password: workspace.ide_password,
-      hostPort: workspace.host_port,
-      gitName: user.username,
-      gitEmail: user.email || `${user.username}@devplatform.local`,
-    });
+    await recreateWorkspaceContainer(workspace);
 
     await query(`UPDATE workspaces SET status = 'running' WHERE id = $1`, [workspace.id]);
     await audit({ actorId: req.user.id, action: 'workspace.create', target: `workspace:${workspace.id}` });
 
+    const previews = await loadPreviews(workspace.id);
     return {
       workspace: {
         ...workspace,
         status: 'running',
         url: `https://${workspace.subdomain}.${process.env.PUBLIC_DOMAIN}`,
         nginx_upstream: `127.0.0.1:${workspace.host_port}`,
+        previews,
       },
     };
   });
 
   app.get('/api/admin/workspaces', async () => {
     const { rows } = await query(
-      `SELECT w.*, u.username FROM workspaces w
+      `SELECT w.*, u.username,
+              COALESCE(
+                (SELECT json_agg(p ORDER BY p.name)
+                 FROM (SELECT id, name, internal_port, host_port
+                       FROM workspace_previews WHERE workspace_id = w.id) p),
+                '[]'::json
+              ) AS previews
+       FROM workspaces w
        JOIN users u ON u.id = w.user_id
        ORDER BY w.created_at DESC`,
     );
     return { workspaces: rows };
+  });
+
+  // ---------- Preview ports ----------
+  app.post('/api/admin/workspaces/:id/previews', async (req, reply) => {
+    const wsId = Number(req.params.id);
+    const { name, internal_port } = req.body || {};
+    if (!name || !internal_port) return reply.code(400).send({ error: 'name and internal_port required' });
+    if (!/^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$/.test(name)) {
+      return reply.code(400).send({ error: 'name must be a valid DNS label (lowercase, digits, hyphens)' });
+    }
+    const port = Number(internal_port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return reply.code(400).send({ error: 'internal_port must be 1..65535' });
+    }
+
+    try {
+      const result = await withTx(async (client) => {
+        const { rows: wsRows } = await client.query(`SELECT * FROM workspaces WHERE id = $1`, [wsId]);
+        const ws = wsRows[0];
+        if (!ws) throw httpError(404, 'workspace not found');
+        const hostPort = await allocatePreviewHostPort(client);
+        await client.query(
+          `INSERT INTO workspace_previews (workspace_id, name, internal_port, host_port)
+           VALUES ($1, $2, $3, $4)`,
+          [wsId, name, port, hostPort],
+        );
+        return { workspace: ws };
+      });
+
+      // Recreate the container with the new port bindings.
+      await recreateWorkspaceContainer(result.workspace);
+      await audit({ actorId: req.user.id, action: 'workspace.preview.add', target: `workspace:${wsId}`, payload: { name, internal_port: port } });
+      return { ok: true };
+    } catch (err) {
+      if (err.statusCode) return reply.code(err.statusCode).send({ error: err.message });
+      if (err.code === '23505') return reply.code(409).send({ error: 'name or port already used on this workspace' });
+      throw err;
+    }
+  });
+
+  app.delete('/api/admin/workspaces/:id/previews/:previewId', async (req, reply) => {
+    const wsId = Number(req.params.id);
+    const previewId = Number(req.params.previewId);
+    const { rows: wsRows } = await query(`SELECT * FROM workspaces WHERE id = $1`, [wsId]);
+    const ws = wsRows[0];
+    if (!ws) return reply.code(404).send({ error: 'workspace not found' });
+    const { rowCount } = await query(
+      `DELETE FROM workspace_previews WHERE id = $1 AND workspace_id = $2`,
+      [previewId, wsId],
+    );
+    if (!rowCount) return reply.code(404).send({ error: 'preview not found' });
+    await recreateWorkspaceContainer(ws);
+    await audit({ actorId: req.user.id, action: 'workspace.preview.remove', target: `workspace:${wsId}`, payload: { preview_id: previewId } });
+    return { ok: true };
   });
 
   app.post('/api/admin/workspaces/:id/start', async (req, reply) => {
@@ -264,21 +349,25 @@ export default async function adminRoutes(app) {
     const { rows } = await query('SELECT * FROM workspaces WHERE id = $1', [id]);
     const ws = rows[0];
     if (!ws) return reply.code(404).send({ error: 'not found' });
-
-    const { rows: ur } = await query('SELECT id, username, email FROM users WHERE id = $1', [ws.user_id]);
-    const user = ur[0];
-
-    await createOrStartWorkspaceContainer({
-      containerName: ws.container_name,
-      subdomain: ws.subdomain,
-      password: ws.ide_password,
-      hostPort: ws.host_port,
-      gitName: user.username,
-      gitEmail: user.email || `${user.username}@devplatform.local`,
-    });
+    await recreateWorkspaceContainer(ws);
     await query(`UPDATE workspaces SET status = 'running' WHERE id = $1`, [id]);
     return { ok: true };
   });
+
+  async function recreateWorkspaceContainer(workspace) {
+    const { rows: ur } = await query('SELECT id, username, email FROM users WHERE id = $1', [workspace.user_id]);
+    const user = ur[0];
+    const previews = await loadPreviews(workspace.id);
+    await createOrStartWorkspaceContainer({
+      containerName: workspace.container_name,
+      subdomain: workspace.subdomain,
+      password: workspace.ide_password,
+      hostPort: workspace.host_port,
+      gitName: user.username,
+      gitEmail: user.email || `${user.username}@devplatform.local`,
+      previews,
+    });
+  }
 
   app.post('/api/admin/workspaces/:id/stop', async (req, reply) => {
     const id = Number(req.params.id);
