@@ -69,11 +69,14 @@ export default async function commentRoutes(app) {
       `SELECT t.*,
               p.name AS project_name, p.slug AS project_slug, p.github_repo,
               u.username AS assigned_to_username,
-              creator.username AS created_by_username
+              creator.username AS created_by_username,
+              w.id        AS assignee_workspace_id,
+              w.subdomain AS assignee_workspace_subdomain
        FROM tasks t
        JOIN projects p ON p.id = t.project_id
        LEFT JOIN users u ON u.id = t.assigned_to
        LEFT JOIN users creator ON creator.id = t.created_by
+       LEFT JOIN workspaces w ON w.user_id = t.assigned_to
        WHERE t.id = $1`,
       [id],
     );

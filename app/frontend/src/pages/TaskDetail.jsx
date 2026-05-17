@@ -75,6 +75,15 @@ export default function TaskDetail() {
 
   const isMine = task.assigned_to === user.id;
   const canCheckpoint = task.status === 'in_progress' && (isMine || user.role === 'admin');
+  const active = ['in_progress', 'submitted'].includes(task.status);
+  // SSO launch URL: own workspace via /api/me, admin viewing someone else's via /api/admin
+  const ideLaunchUrl = active
+    ? (isMine
+        ? '/api/me/workspace/launch'
+        : (user.role === 'admin' && task.assignee_workspace_id
+            ? `/api/admin/workspaces/${task.assignee_workspace_id}/launch`
+            : null))
+    : null;
 
   return (
     <>
@@ -90,6 +99,13 @@ export default function TaskDetail() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          {ideLaunchUrl && (
+            <a href={ideLaunchUrl} target="_blank" rel="noreferrer">
+              <button type="button">
+                {isMine ? 'Open IDE →' : `Open ${task.assigned_to_username}'s IDE →`}
+              </button>
+            </a>
+          )}
           {canCheckpoint && <button onClick={checkpoint}>Checkpoint</button>}
           {canCheckpoint && <button className="primary" onClick={submit}>Submit</button>}
           {task.pr_url && <a className="primary" href={task.pr_url} target="_blank" rel="noreferrer" style={{ padding: '6px 12px', borderRadius: 6, background: 'var(--accent)', color: '#fff' }}>Open PR ↗</a>}
