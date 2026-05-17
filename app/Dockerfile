@@ -16,6 +16,7 @@ COPY package.json package-lock.json* ./
 RUN npm install --omit=dev --no-audit --no-fund
 
 COPY src ./src
+COPY db ./db
 COPY --from=frontend-build /build/frontend/dist ./frontend/dist
 
 ENV NODE_ENV=production
