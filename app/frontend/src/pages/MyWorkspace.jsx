@@ -82,6 +82,10 @@ export default function MyWorkspace() {
         Run <code className="mono">claude</code> in the workspace terminal to start the Claude Code CLI — sign in with
         <em> your own </em> Claude Pro account the first time.
       </p>
+      <p className="muted" style={{ fontSize: 12 }}>
+        Note: commits made via <b>Submit</b> / <b>Checkpoint</b> are attributed to the platform identity (not yours).
+        The platform handles the GitHub push on your behalf — you don't need a GitHub account or git credentials.
+      </p>
     </>
   );
 }

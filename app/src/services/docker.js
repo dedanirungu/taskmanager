@@ -16,6 +16,20 @@ const docker = new Docker({
 const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || '/srv/workspaces';
 const CODE_SERVER_IMAGE = process.env.CODE_SERVER_IMAGE || 'devplatform/code-server:latest';
 
+// Platform-wide commit identity. Used as the default author on every commit
+// the platform makes via "submit"/"checkpoint", so that clients only ever see
+// the operator's identity — never the subcontracted developer's.
+// Per-project override (projects.git_author_name/email) takes precedence.
+const PLATFORM_GIT_NAME  = process.env.PLATFORM_GIT_NAME  || process.env.GITHUB_USER  || 'devplatform';
+const PLATFORM_GIT_EMAIL = process.env.PLATFORM_GIT_EMAIL || process.env.GITHUB_EMAIL || 'devplatform@localhost';
+
+export function effectiveCommitIdentity(project) {
+  if (project?.git_author_name && project?.git_author_email) {
+    return { name: project.git_author_name, email: project.git_author_email };
+  }
+  return { name: PLATFORM_GIT_NAME, email: PLATFORM_GIT_EMAIL };
+}
+
 export function workspaceHostPath(subdomain, sub = '') {
   return path.join(WORKSPACE_ROOT, subdomain, sub);
 }
@@ -29,12 +43,14 @@ export async function ensureWorkspaceDirs(subdomain) {
 // previews: [{ name, internal_port, host_port }]
 //   8080 (IDE) is always exposed at hostPort. Each preview adds another
 //   loopback binding host_port → internal_port.
+//
+// Note: GIT_USER_NAME / GIT_USER_EMAIL passed to the container are the
+// PLATFORM identity (not the developer's). Clients should not see
+// subcontracted developer names in commit history.
 export async function createOrStartWorkspaceContainer({
   containerName,
   subdomain,
   password,
-  gitName,
-  gitEmail,
   hostPort,
   previews = [],
 }) {
@@ -66,8 +82,8 @@ export async function createOrStartWorkspaceContainer({
     name: containerName,
     Env: [
       `PASSWORD=${password}`,
-      `GIT_USER_NAME=${gitName}`,
-      `GIT_USER_EMAIL=${gitEmail}`,
+      `GIT_USER_NAME=${PLATFORM_GIT_NAME}`,
+      `GIT_USER_EMAIL=${PLATFORM_GIT_EMAIL}`,
     ],
     HostConfig: {
       RestartPolicy: { Name: 'unless-stopped' },
@@ -221,20 +237,13 @@ export async function ensureProjectClonedInContainer(containerName, project) {
 }
 
 async function writeProjectGitIdentity(containerName, projectDir, project) {
-  if (!project.git_author_name || !project.git_author_email) {
-    // Clear any per-repo override so it falls back to the container's --global identity.
-    await execInContainer(
-      containerName,
-      `git config --unset user.name || true; git config --unset user.email || true`,
-      { workDir: projectDir },
-    );
-    return;
-  }
-  const name = JSON.stringify(project.git_author_name);
-  const email = JSON.stringify(project.git_author_email);
+  // Always write the effective identity (project override OR platform default)
+  // into the repo's local .git/config so the developer can't accidentally
+  // commit as themselves via the terminal.
+  const { name, email } = effectiveCommitIdentity(project);
   const res = await execInContainer(
     containerName,
-    `git config user.name ${name} && git config user.email ${email}`,
+    `git config user.name ${JSON.stringify(name)} && git config user.email ${JSON.stringify(email)}`,
     { workDir: projectDir },
   );
   if (res.exitCode !== 0) {
@@ -265,15 +274,15 @@ export async function checkoutTaskBranch({ containerName, project, branchName })
 }
 
 // Commit any local changes and push to origin using the platform's GitHub token.
-// If the project has a configured author, force it via `-c user.name=... -c user.email=...`
-// so the commit identity is correct even if the local config drifted.
+// The commit author is always forced to the effective identity (project override
+// OR platform default) via `-c user.name=... -c user.email=...` so it's correct
+// even if the local config in the workspace drifted.
 export async function commitAndPush({ containerName, project, branchName, commitMessage }) {
   const projectDir = `/home/coder/projects/${project.slug}`;
   const cloneUrl = authenticatedCloneUrl(project.github_repo);
 
-  const identityFlags = (project.git_author_name && project.git_author_email)
-    ? `-c user.name=${JSON.stringify(project.git_author_name)} -c user.email=${JSON.stringify(project.git_author_email)}`
-    : '';
+  const { name, email } = effectiveCommitIdentity(project);
+  const identityFlags = `-c user.name=${JSON.stringify(name)} -c user.email=${JSON.stringify(email)}`;
 
   // Use a one-shot push URL so the token never sits in the repo's git config.
   const cmd = `

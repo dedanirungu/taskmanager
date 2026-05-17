@@ -355,16 +355,15 @@ export default async function adminRoutes(app) {
   });
 
   async function recreateWorkspaceContainer(workspace) {
-    const { rows: ur } = await query('SELECT id, username, email FROM users WHERE id = $1', [workspace.user_id]);
-    const user = ur[0];
+    // Note: we do NOT pass the developer's name/email here. Containers get the
+    // PLATFORM identity by default; per-project override is written into each
+    // cloned repo's local .git/config during claim.
     const previews = await loadPreviews(workspace.id);
     await createOrStartWorkspaceContainer({
       containerName: workspace.container_name,
       subdomain: workspace.subdomain,
       password: workspace.ide_password,
       hostPort: workspace.host_port,
-      gitName: user.username,
-      gitEmail: user.email || `${user.username}@devplatform.local`,
       previews,
     });
   }
