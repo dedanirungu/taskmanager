@@ -11,6 +11,7 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import { loadUser } from './middleware/auth.js';
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
+import clientRoutes from './routes/clients.js';
 import taskRoutes from './routes/tasks.js';
 import commentRoutes from './routes/comments.js';
 import dashboardRoutes from './routes/dashboard.js';
@@ -53,6 +54,7 @@ app.addHook('preHandler', loadUser);
 
 await app.register(authRoutes);
 await app.register(adminRoutes);
+await app.register(clientRoutes);
 await app.register(taskRoutes);
 await app.register(commentRoutes);
 await app.register(dashboardRoutes);

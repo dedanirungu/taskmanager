@@ -8,6 +8,35 @@ import { slugify } from '../util/slug.js';
 import { randomPassword } from '../util/random.js';
 import { createOrStartWorkspaceContainer, stopWorkspaceContainer, removeWorkspaceContainer } from '../services/docker.js';
 import { autoSubmitLaunchHtml } from './me.js';
+import { ensureProjectClonedInContainer } from '../services/docker.js';
+
+async function cloneScopedProjectsForUser(user) {
+  const { rows: ws } = await query(
+    `SELECT id, container_name FROM workspaces WHERE user_id = $1`, [user.id],
+  );
+  if (!ws[0]) return;
+
+  let projects;
+  if (user.role === 'admin' || user.access_scope === 'all') {
+    ({ rows: projects } = await query(`SELECT * FROM projects ORDER BY name`));
+  } else {
+    ({ rows: projects } = await query(
+      `SELECT p.* FROM projects p
+       JOIN user_projects up ON up.project_id = p.id
+       WHERE up.user_id = $1
+       ORDER BY p.name`,
+      [user.id],
+    ));
+  }
+
+  for (const project of projects) {
+    try {
+      await ensureProjectClonedInContainer(ws[0].container_name, project);
+    } catch (err) {
+      console.warn(`[provision] failed to clone ${project.slug} for ${user.username}:`, err.message);
+    }
+  }
+}
 
 function httpError(statusCode, message) {
   const err = new Error(message);
@@ -88,11 +117,15 @@ export default async function adminRoutes(app) {
   app.get('/api/admin/projects', async () => {
     // Never expose github_token; surface only whether one is set.
     const { rows } = await query(
-      `SELECT id, name, slug, github_repo, default_branch, description,
-              git_author_name, git_author_email,
-              (github_token IS NOT NULL) AS has_github_token,
-              created_at
-       FROM projects ORDER BY name`,
+      `SELECT p.id, p.name, p.slug, p.github_repo, p.default_branch, p.description,
+              p.git_author_name, p.git_author_email,
+              (p.github_token IS NOT NULL) AS has_github_token,
+              p.client_id,
+              c.name AS client_name,
+              p.created_at
+       FROM projects p
+       LEFT JOIN clients c ON c.id = p.client_id
+       ORDER BY c.name NULLS LAST, p.name`,
     );
     return { projects: rows };
   });
@@ -102,6 +135,7 @@ export default async function adminRoutes(app) {
       name, github_repo, default_branch = 'main', description = null,
       git_author_name = null, git_author_email = null,
       github_token = null,
+      client_id = null,
     } = req.body || {};
     if (!name || !github_repo) {
       return reply.code(400).send({ error: 'name and github_repo required' });
@@ -113,9 +147,9 @@ export default async function adminRoutes(app) {
     try {
       const { rows } = await query(
         `INSERT INTO projects (name, slug, github_repo, default_branch, description,
-                               git_author_name, git_author_email, github_token)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, slug`,
-        [name, slug, github_repo, default_branch, description, git_author_name, git_author_email, github_token || null],
+                               git_author_name, git_author_email, github_token, client_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, name, slug, client_id`,
+        [name, slug, github_repo, default_branch, description, git_author_name, git_author_email, github_token || null, client_id],
       );
       await audit({
         actorId: req.user.id, action: 'project.create',
@@ -131,7 +165,7 @@ export default async function adminRoutes(app) {
 
   app.patch('/api/admin/projects/:id', async (req, reply) => {
     const id = Number(req.params.id);
-    const { description, default_branch, git_author_name, git_author_email, github_token } = req.body || {};
+    const { description, default_branch, git_author_name, git_author_email, github_token, client_id } = req.body || {};
 
     if ((git_author_name && !git_author_email) || (git_author_email && !git_author_name)) {
       return reply.code(400).send({ error: 'set both git_author_name and git_author_email or neither' });
@@ -145,6 +179,7 @@ export default async function adminRoutes(app) {
     if (default_branch !== undefined)   push('default_branch', default_branch);
     if (git_author_name !== undefined)  push('git_author_name', git_author_name);
     if (git_author_email !== undefined) push('git_author_email', git_author_email);
+    if (client_id !== undefined)        push('client_id', client_id || null);
     // Special sentinel: client sends empty string to clear the token; missing key = unchanged.
     if (github_token !== undefined)     push('github_token', github_token || null);
 
@@ -281,6 +316,13 @@ export default async function adminRoutes(app) {
     await query(`UPDATE workspaces SET status = 'running' WHERE id = $1`, [ws.id]);
     await audit({ actorId, action: 'workspace.create', target: `workspace:${ws.id}` });
     await writeCertTrigger(`${ws.subdomain}.${process.env.PUBLIC_DOMAIN}`);
+
+    // Pre-clone every project the user has scope on, so they have all their
+    // sibling repos (backend + mobile + frontend) ready to run immediately.
+    // Fire-and-forget — clone takes time and we don't want to block the response.
+    cloneScopedProjectsForUser(user).catch((err) =>
+      console.warn('[provision] scoped project clones failed:', err.message),
+    );
 
     const previews = await loadPreviews(ws.id);
     return {

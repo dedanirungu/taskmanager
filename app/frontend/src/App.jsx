@@ -6,6 +6,7 @@ import TaskBoard from './pages/TaskBoard.jsx';
 import TaskDetail from './pages/TaskDetail.jsx';
 import MyWorkspace from './pages/MyWorkspace.jsx';
 import AdminDashboard from './pages/AdminDashboard.jsx';
+import AdminClients from './pages/AdminClients.jsx';
 import AdminProjects from './pages/AdminProjects.jsx';
 import AdminUsers from './pages/AdminUsers.jsx';
 import AdminWorkspaces from './pages/AdminWorkspaces.jsx';
@@ -33,6 +34,7 @@ function Inner() {
         <Route path="/workspace" element={<MyWorkspace />} />
 
         {user.role === 'admin' && <Route path="/admin"            element={<AdminDashboard />} />}
+        {user.role === 'admin' && <Route path="/admin/clients"    element={<AdminClients />} />}
         {user.role === 'admin' && <Route path="/admin/projects"   element={<AdminProjects />} />}
         {user.role === 'admin' && <Route path="/admin/users"      element={<AdminUsers />} />}
         {user.role === 'admin' && <Route path="/admin/workspaces" element={<AdminWorkspaces />} />}

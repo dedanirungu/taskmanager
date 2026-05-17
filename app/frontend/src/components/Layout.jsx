@@ -29,6 +29,7 @@ export default function Layout({ children }) {
           {user.role === 'admin' && (
             <>
               <div style={{ marginTop: 16, color: '#666', fontSize: 11, padding: '0 10px' }}>ADMIN</div>
+              <NavLink to="/admin/clients">Clients</NavLink>
               <NavLink to="/admin/projects">Projects</NavLink>
               <NavLink to="/admin/users">Users</NavLink>
               <NavLink to="/admin/workspaces">Workspaces</NavLink>
