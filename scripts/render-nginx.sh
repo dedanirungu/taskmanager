@@ -29,17 +29,13 @@ cert_exists() {
   test -f "/etc/letsencrypt/live/$1/fullchain.pem"
 }
 
-render() {
-  local template="$1"
-  local target="$2"
-  envsubst < "$template" > "$target"
-}
-
-# 1) Platform block
+# 1) Platform block — only substitute our placeholders; leave nginx's $host etc. alone.
 PLATFORM_HOST="platform.$PUBLIC_DOMAIN"
 if cert_exists "$PLATFORM_HOST"; then
   PUBLIC_DOMAIN="$PUBLIC_DOMAIN" \
-    render "$TEMPLATE_DIR/platform.conf.template" "$OUT_DIR/devplatform-platform.conf"
+    envsubst '$PUBLIC_DOMAIN' \
+    < "$TEMPLATE_DIR/platform.conf.template" \
+    > "$OUT_DIR/devplatform-platform.conf"
   echo "wrote devplatform-platform.conf for $PLATFORM_HOST"
 else
   echo "[skip] cert missing for $PLATFORM_HOST" >&2
