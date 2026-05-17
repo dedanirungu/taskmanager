@@ -7,6 +7,7 @@ import { audit } from '../services/audit.js';
 import { slugify } from '../util/slug.js';
 import { randomPassword } from '../util/random.js';
 import { createOrStartWorkspaceContainer, stopWorkspaceContainer, removeWorkspaceContainer } from '../services/docker.js';
+import { autoSubmitLaunchHtml } from './me.js';
 
 function httpError(statusCode, message) {
   const err = new Error(message);
@@ -444,6 +445,17 @@ export default async function adminRoutes(app) {
     await writeDeleteTrigger(`${prevRows[0].name}-${ws.subdomain}.${process.env.PUBLIC_DOMAIN}`);
     await audit({ actorId: req.user.id, action: 'workspace.preview.remove', target: `workspace:${wsId}`, payload: { preview_id: previewId, name: prevRows[0].name } });
     return { ok: true };
+  });
+
+  // Admin can SSO into any workspace (handy for inspection).
+  app.get('/api/admin/workspaces/:id/launch', async (req, reply) => {
+    const id = Number(req.params.id);
+    const { rows } = await query(
+      `SELECT subdomain, ide_password FROM workspaces WHERE id = $1`, [id]);
+    const ws = rows[0];
+    if (!ws) return reply.code(404).send({ error: 'not found' });
+    const url = `https://${ws.subdomain}.${process.env.PUBLIC_DOMAIN}/login`;
+    reply.type('text/html; charset=utf-8').send(autoSubmitLaunchHtml({ url, password: ws.ide_password }));
   });
 
   app.post('/api/admin/workspaces/:id/start', async (req, reply) => {

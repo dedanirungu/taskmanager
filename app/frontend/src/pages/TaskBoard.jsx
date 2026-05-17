@@ -28,8 +28,9 @@ export default function TaskBoard() {
     setErr(null); setMsg(null);
     try {
       const res = await api.post(`/api/tasks/${t.id}/claim`, {});
-      setMsg(`Claimed — opening ${res.workspace_url} (IDE password: ${res.ide_password})`);
-      window.open(res.workspace_url, '_blank', 'noopener');
+      setMsg(`Claimed — opening your workspace`);
+      // Use the SSO launcher so the dev doesn't have to type the IDE password.
+      window.open(res.launch_url || res.workspace_url, '_blank', 'noopener');
       await load();
     } catch (e) { setErr(e.message); }
   }

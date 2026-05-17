@@ -87,8 +87,15 @@ export default function AdminWorkspaces() {
 
           <div className="grid-2" style={{ marginTop: 12 }}>
             <div>
-              <label>IDE URL</label>
-              <div><a href={`https://${w.subdomain}.${publicDomain}`} target="_blank" rel="noreferrer">https://{w.subdomain}.{publicDomain}</a></div>
+              <label>IDE</label>
+              <div>
+                <a href={`/api/admin/workspaces/${w.id}/launch`} target="_blank" rel="noreferrer">
+                  <button type="button">Open IDE (SSO) →</button>
+                </a>
+              </div>
+              <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
+                Direct URL: <a href={`https://${w.subdomain}.${publicDomain}`} target="_blank" rel="noreferrer">https://{w.subdomain}.{publicDomain}</a>
+              </div>
               <label style={{ marginTop: 8 }}>IDE password</label>
               <code className="mono">{w.ide_password}</code>
             </div>

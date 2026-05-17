@@ -27,11 +27,19 @@ export default function MyWorkspace() {
       <div className="page-header"><h2>My workspace</h2></div>
       <div className="panel">
         <div className="field">
-          <label>IDE URL</label>
-          <div><a href={ws.url} target="_blank" rel="noreferrer">{ws.url}</a></div>
+          <label>IDE</label>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <a href="/api/me/workspace/launch" target="_blank" rel="noreferrer">
+              <button className="primary" type="button">Open IDE →</button>
+            </a>
+            <span className="muted" style={{ fontSize: 12 }}>(SSO — no separate password prompt)</span>
+          </div>
+          <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
+            Direct URL (if you need to bookmark it): <a href={ws.url} target="_blank" rel="noreferrer">{ws.url}</a>
+          </div>
         </div>
         <div className="field">
-          <label>IDE password</label>
+          <label>IDE password <span className="muted">(only needed if SSO fails)</span></label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <code className="mono">{ws.ide_password}</code>
             <button onClick={copy} className="ghost">{copied ? 'Copied!' : 'Copy'}</button>

@@ -156,6 +156,8 @@ export default async function taskRoutes(app) {
     return {
       task,
       workspace_url: `https://${workspace.subdomain}.${process.env.PUBLIC_DOMAIN}`,
+      // Frontend should prefer launch_url — it auto-logs into code-server.
+      launch_url: '/api/me/workspace/launch',
       ide_password: workspace.ide_password,
       project_path_in_ide: `/home/coder/projects/${project.slug}`,
     };
