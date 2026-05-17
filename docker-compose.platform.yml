@@ -46,13 +46,16 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_ADMIN_CHAT_ID: ${TELEGRAM_ADMIN_CHAT_ID:-}
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?PUBLIC_DOMAIN must be set (e.g. yourdomain.com)}
-      WORKSPACE_ROOT: /srv/workspaces
-      CONFLICT_CHECK_ROOT: /srv/conflict-check
+      # The bind paths below MUST match between host and container so that when
+      # the app asks the host's docker daemon to bind-mount a workspace dir into
+      # a code-server container, docker can resolve the path on the host.
+      WORKSPACE_ROOT: ${APP_HOST_DIR:-/srv/devplatform}/workspaces
+      CONFLICT_CHECK_ROOT: ${APP_HOST_DIR:-/srv/devplatform}/conflict-check
       DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./workspaces:/srv/workspaces
-      - ./conflict-check:/srv/conflict-check
+      - ${APP_HOST_DIR:-/srv/devplatform}/workspaces:${APP_HOST_DIR:-/srv/devplatform}/workspaces
+      - ${APP_HOST_DIR:-/srv/devplatform}/conflict-check:${APP_HOST_DIR:-/srv/devplatform}/conflict-check
     ports:
       - "127.0.0.1:3000:3000"
 

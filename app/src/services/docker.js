@@ -36,7 +36,13 @@ export function workspaceHostPath(subdomain, sub = '') {
 
 export async function ensureWorkspaceDirs(subdomain) {
   for (const sub of ['projects', 'config', 'claude']) {
-    await fs.mkdir(workspaceHostPath(subdomain, sub), { recursive: true, mode: 0o755 });
+    const p = workspaceHostPath(subdomain, sub);
+    await fs.mkdir(p, { recursive: true, mode: 0o755 });
+    // code-server runs as uid 1000 inside the container; chown so it can write.
+    try { await fs.chown(p, 1000, 1000); } catch (err) {
+      // If we're not running as root we can't chown — that's OK in local dev.
+      if (err.code !== 'EPERM') throw err;
+    }
   }
 }
 
