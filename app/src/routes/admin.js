@@ -27,23 +27,30 @@ export default async function adminRoutes(app) {
 
   app.get('/api/admin/projects', async () => {
     const { rows } = await query(
-      `SELECT id, name, slug, github_repo, default_branch, description, created_at
+      `SELECT id, name, slug, github_repo, default_branch, description,
+              git_author_name, git_author_email, created_at
        FROM projects ORDER BY name`,
     );
     return { projects: rows };
   });
 
   app.post('/api/admin/projects', async (req, reply) => {
-    const { name, github_repo, default_branch = 'main', description = null } = req.body || {};
+    const {
+      name, github_repo, default_branch = 'main', description = null,
+      git_author_name = null, git_author_email = null,
+    } = req.body || {};
     if (!name || !github_repo) {
       return reply.code(400).send({ error: 'name and github_repo required' });
+    }
+    if ((git_author_name && !git_author_email) || (!git_author_name && git_author_email)) {
+      return reply.code(400).send({ error: 'set both git_author_name and git_author_email or neither' });
     }
     const slug = slugify(name);
     try {
       const { rows } = await query(
-        `INSERT INTO projects (name, slug, github_repo, default_branch, description)
-         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-        [name, slug, github_repo, default_branch, description],
+        `INSERT INTO projects (name, slug, github_repo, default_branch, description, git_author_name, git_author_email)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [name, slug, github_repo, default_branch, description, git_author_name, git_author_email],
       );
       await audit({ actorId: req.user.id, action: 'project.create', target: `project:${rows[0].id}`, payload: rows[0] });
       return { project: rows[0] };
@@ -51,6 +58,35 @@ export default async function adminRoutes(app) {
       if (err.code === '23505') return reply.code(409).send({ error: 'project already exists' });
       throw err;
     }
+  });
+
+  app.patch('/api/admin/projects/:id', async (req, reply) => {
+    const id = Number(req.params.id);
+    const { description, default_branch, git_author_name, git_author_email } = req.body || {};
+
+    if ((git_author_name && !git_author_email) || (git_author_email && !git_author_name)) {
+      return reply.code(400).send({ error: 'set both git_author_name and git_author_email or neither' });
+    }
+
+    const fields = [];
+    const params = [];
+    const push = (col, val) => { params.push(val); fields.push(`${col} = $${params.length}`); };
+
+    if (description !== undefined)      push('description', description);
+    if (default_branch !== undefined)   push('default_branch', default_branch);
+    if (git_author_name !== undefined)  push('git_author_name', git_author_name);
+    if (git_author_email !== undefined) push('git_author_email', git_author_email);
+
+    if (!fields.length) return { ok: true };
+
+    params.push(id);
+    const { rows } = await query(
+      `UPDATE projects SET ${fields.join(', ')} WHERE id = $${params.length} RETURNING *`,
+      params,
+    );
+    if (!rows[0]) return reply.code(404).send({ error: 'not found' });
+    await audit({ actorId: req.user.id, action: 'project.update', target: `project:${id}`, payload: req.body });
+    return { project: rows[0] };
   });
 
   app.delete('/api/admin/projects/:id', async (req, reply) => {

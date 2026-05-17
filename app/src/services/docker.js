@@ -143,18 +143,21 @@ export async function execInContainer(containerName, command, { workDir, env = [
 
 // Ensure a project repo is cloned inside a developer's container.
 // Path inside container: /home/coder/projects/<project.slug>
+//
+// If the project has its own commit author configured (git_author_name + git_author_email),
+// we write those into the repo's *local* git config so they override the container-wide
+// developer identity for any operation in this directory — including ad-hoc `git commit`
+// the developer might run in the terminal.
 export async function ensureProjectClonedInContainer(containerName, project) {
   const projectDir = `/home/coder/projects/${project.slug}`;
   const cloneUrl = authenticatedCloneUrl(project.github_repo);
 
-  // Check if dir exists with a .git
   const check = await execInContainer(
     containerName,
     `if [ -d "${projectDir}/.git" ]; then echo exists; else echo missing; fi`,
   );
 
   if (check.stdout.trim() === 'exists') {
-    // refresh
     const pull = await execInContainer(
       containerName,
       `git fetch origin && git checkout ${project.default_branch} && git pull --ff-only`,
@@ -163,22 +166,44 @@ export async function ensureProjectClonedInContainer(containerName, project) {
     if (pull.exitCode !== 0) {
       console.warn(`[docker] fetch/pull failed in ${containerName} for ${project.slug}:`, pull.stderr);
     }
+    await writeProjectGitIdentity(containerName, projectDir, project);
     return projectDir;
   }
 
-  // Clone fresh.
   const cloneCmd = `git clone --depth 50 ${cloneUrl} ${projectDir}`;
   const res = await execInContainer(containerName, cloneCmd);
   if (res.exitCode !== 0) {
     throw new Error(`git clone failed for ${project.github_repo}: ${res.stderr}`);
   }
-  // Replace remote so the PAT is not stored in plaintext .git/config (we re-inject on push).
   await execInContainer(
     containerName,
     `git remote set-url origin https://github.com/${project.github_repo}.git`,
     { workDir: projectDir },
   );
+  await writeProjectGitIdentity(containerName, projectDir, project);
   return projectDir;
+}
+
+async function writeProjectGitIdentity(containerName, projectDir, project) {
+  if (!project.git_author_name || !project.git_author_email) {
+    // Clear any per-repo override so it falls back to the container's --global identity.
+    await execInContainer(
+      containerName,
+      `git config --unset user.name || true; git config --unset user.email || true`,
+      { workDir: projectDir },
+    );
+    return;
+  }
+  const name = JSON.stringify(project.git_author_name);
+  const email = JSON.stringify(project.git_author_email);
+  const res = await execInContainer(
+    containerName,
+    `git config user.name ${name} && git config user.email ${email}`,
+    { workDir: projectDir },
+  );
+  if (res.exitCode !== 0) {
+    console.warn(`[docker] failed to write project git identity for ${project.slug}:`, res.stderr);
+  }
 }
 
 // Create or switch to the task branch for a project inside the container.
@@ -204,9 +229,15 @@ export async function checkoutTaskBranch({ containerName, project, branchName })
 }
 
 // Commit any local changes and push to origin using the platform's GitHub token.
+// If the project has a configured author, force it via `-c user.name=... -c user.email=...`
+// so the commit identity is correct even if the local config drifted.
 export async function commitAndPush({ containerName, project, branchName, commitMessage }) {
   const projectDir = `/home/coder/projects/${project.slug}`;
   const cloneUrl = authenticatedCloneUrl(project.github_repo);
+
+  const identityFlags = (project.git_author_name && project.git_author_email)
+    ? `-c user.name=${JSON.stringify(project.git_author_name)} -c user.email=${JSON.stringify(project.git_author_email)}`
+    : '';
 
   // Use a one-shot push URL so the token never sits in the repo's git config.
   const cmd = `
@@ -215,7 +246,7 @@ export async function commitAndPush({ containerName, project, branchName, commit
     if git diff --cached --quiet; then
       echo "no changes to commit"
     else
-      git commit -m ${JSON.stringify(commitMessage)}
+      git ${identityFlags} commit -m ${JSON.stringify(commitMessage)}
     fi
     git push ${cloneUrl} HEAD:${branchName}
   `;
