@@ -4,7 +4,6 @@ import { api } from '../lib/api.js';
 const newBlank = {
   username: '', password: '', email: '',
   role: 'developer', access_scope: 'scoped', project_ids: [],
-  provision_workspace: true,
   workspace_subdomain: '',
 };
 
@@ -43,7 +42,6 @@ export default function AdminUsers() {
         role: form.role,
         access_scope: form.access_scope,
         project_ids: form.access_scope === 'scoped' ? form.project_ids.map(Number) : [],
-        provision_workspace: form.provision_workspace && form.role === 'developer',
       };
       if (form.workspace_subdomain) body.workspace_subdomain = form.workspace_subdomain;
       const result = await api.post('/api/admin/users', body);
@@ -85,7 +83,7 @@ export default function AdminUsers() {
   }
 
   async function remove(u) {
-    if (!confirm(`Delete user ${u.username}? This removes their workspace container too.`)) return;
+    if (!confirm(`Delete user ${u.username}? This removes their workspace container, files, SSL cert, and nginx config.`)) return;
     await api.delete(`/api/admin/users/${u.id}`);
     load();
   }
@@ -162,16 +160,8 @@ export default function AdminUsers() {
           )}
 
           {form.role === 'developer' && (
-            <div className="field">
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                <input type="checkbox" style={{ width: 'auto' }}
-                  checked={form.provision_workspace}
-                  onChange={(e) => setForm({ ...form, provision_workspace: e.target.checked })} />
-                <span>Provision workspace + issue SSL cert immediately</span>
-              </label>
-              <div className="muted" style={{ fontSize: 12, marginLeft: 24 }}>
-                Creates the code-server container, allocates a host port, and (within ~1 minute) issues a Let's Encrypt cert + reloads nginx for the subdomain.
-              </div>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+              ↳ Workspace will be provisioned automatically: container + Let's Encrypt cert + nginx reload, ~1 min after Create.
             </div>
           )}
 

@@ -19,13 +19,26 @@ function httpError(statusCode, message) {
 const TRIGGERS_DIR = process.env.TRIGGERS_DIR
   || path.join(process.env.WORKSPACE_ROOT || '/srv/devplatform/workspaces', '..', 'triggers');
 
-async function writeCertTrigger(domain) {
+async function writeTrigger(domain, kind /* 'req' | 'del' */) {
   try {
     await fs.mkdir(TRIGGERS_DIR, { recursive: true });
-    const file = path.join(TRIGGERS_DIR, `${domain}.req`);
+    const file = path.join(TRIGGERS_DIR, `${domain}.${kind}`);
     await fs.writeFile(file, domain + '\n', { mode: 0o644 });
   } catch (err) {
-    console.warn('[trigger] failed to write cert trigger for', domain, err.message);
+    console.warn(`[trigger] failed to write ${kind} trigger for`, domain, err.message);
+  }
+}
+
+async function writeCertTrigger(domain)   { return writeTrigger(domain, 'req'); }
+async function writeDeleteTrigger(domain) { return writeTrigger(domain, 'del'); }
+
+async function removeWorkspaceFilesOnHost(subdomain) {
+  const wsRoot = process.env.WORKSPACE_ROOT || '/srv/devplatform/workspaces';
+  const dir = path.join(wsRoot, subdomain);
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn('[cleanup] failed to remove workspace dir', dir, err.message);
   }
 }
 
@@ -181,7 +194,10 @@ export default async function adminRoutes(app) {
       project_ids = [],
       // If true (default for developers), provision the workspace container
       // and write a trigger file for cert+nginx in the same request.
-      provision_workspace = role === 'developer',
+      // Developers are always auto-provisioned with a workspace; admins are not.
+      // This used to be a checkbox in the UI but it created confusion: the
+      // operator forgot to tick it and the dev had no workspace on first login.
+      provision_workspace = (role === 'developer'),
       workspace_subdomain,
     } = req.body || {};
     if (!username || !password) return reply.code(400).send({ error: 'username and password required' });
@@ -308,14 +324,32 @@ export default async function adminRoutes(app) {
   app.delete('/api/admin/users/:id', async (req, reply) => {
     const id = Number(req.params.id);
     if (id === req.user.id) return reply.code(400).send({ error: 'cannot delete yourself' });
-    // Stop + remove any workspace for the user first.
-    const { rows } = await query('SELECT container_name FROM workspaces WHERE user_id = $1', [id]);
-    for (const w of rows) {
+
+    // Find all workspaces (and their previews) belonging to this user, then
+    // tear them down completely: container → preview certs → workspace cert
+    // → workspace dir on host.  Trigger files queue the host-side cert+nginx work.
+    const { rows: workspaces } = await query(
+      `SELECT id, container_name, subdomain FROM workspaces WHERE user_id = $1`, [id],
+    );
+    const publicDomain = process.env.PUBLIC_DOMAIN;
+    for (const w of workspaces) {
+      const { rows: previews } = await query(
+        `SELECT name FROM workspace_previews WHERE workspace_id = $1`, [w.id],
+      );
       await stopWorkspaceContainer(w.container_name).catch(() => {});
       await removeWorkspaceContainer(w.container_name).catch(() => {});
+      for (const p of previews) {
+        await writeDeleteTrigger(`${p.name}-${w.subdomain}.${publicDomain}`);
+      }
+      await writeDeleteTrigger(`${w.subdomain}.${publicDomain}`);
+      await removeWorkspaceFilesOnHost(w.subdomain);
     }
+
     await query('DELETE FROM users WHERE id = $1', [id]);
-    await audit({ actorId: req.user.id, action: 'user.delete', target: `user:${id}` });
+    await audit({
+      actorId: req.user.id, action: 'user.delete', target: `user:${id}`,
+      payload: { workspaces_removed: workspaces.length },
+    });
     return { ok: true };
   });
 
@@ -397,13 +431,18 @@ export default async function adminRoutes(app) {
     const { rows: wsRows } = await query(`SELECT * FROM workspaces WHERE id = $1`, [wsId]);
     const ws = wsRows[0];
     if (!ws) return reply.code(404).send({ error: 'workspace not found' });
-    const { rowCount } = await query(
+    const { rows: prevRows } = await query(
+      `SELECT name FROM workspace_previews WHERE id = $1 AND workspace_id = $2`,
+      [previewId, wsId],
+    );
+    if (!prevRows[0]) return reply.code(404).send({ error: 'preview not found' });
+    await query(
       `DELETE FROM workspace_previews WHERE id = $1 AND workspace_id = $2`,
       [previewId, wsId],
     );
-    if (!rowCount) return reply.code(404).send({ error: 'preview not found' });
     await recreateWorkspaceContainer(ws);
-    await audit({ actorId: req.user.id, action: 'workspace.preview.remove', target: `workspace:${wsId}`, payload: { preview_id: previewId } });
+    await writeDeleteTrigger(`${prevRows[0].name}-${ws.subdomain}.${process.env.PUBLIC_DOMAIN}`);
+    await audit({ actorId: req.user.id, action: 'workspace.preview.remove', target: `workspace:${wsId}`, payload: { preview_id: previewId, name: prevRows[0].name } });
     return { ok: true };
   });
 
