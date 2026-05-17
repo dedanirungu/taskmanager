@@ -1,0 +1,10 @@
+{
+  "name": "devplatform-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Cron jobs invoked from /etc/cron — kept separate from the app's runtime image.",
+  "dependencies": {
+    "octokit": "^4.0.2",
+    "pg": "^8.13.1"
+  }
+}

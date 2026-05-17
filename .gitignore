@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.local
+*.log
+.DS_Store
+
+# Runtime data — DO NOT commit
+workspaces/*/
+!workspaces/.gitkeep
+backups/*
+!backups/.gitkeep
+conflict-check/
+
+# Built frontend
+app/frontend/dist/
+app/frontend/node_modules/

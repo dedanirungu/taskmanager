@@ -1,0 +1,58 @@
+name: devplatform
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: devplatform-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PGDATABASE:-devplatform}
+      POSTGRES_USER: ${PGUSER:-devplatform}
+      POSTGRES_PASSWORD: ${PGPASSWORD:?PGPASSWORD must be set in .env}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-devplatform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    image: devplatform/app:latest
+    container_name: devplatform-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-devplatform}
+      PGUSER: ${PGUSER:-devplatform}
+      PGPASSWORD: ${PGPASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:?GITHUB_TOKEN must be set}
+      GITHUB_USER: ${GITHUB_USER:?GITHUB_USER must be set (used as commit author)}
+      GITHUB_EMAIL: ${GITHUB_EMAIL:?GITHUB_EMAIL must be set}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ADMIN_CHAT_ID: ${TELEGRAM_ADMIN_CHAT_ID:-}
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?PUBLIC_DOMAIN must be set (e.g. yourdomain.com)}
+      WORKSPACE_ROOT: /srv/workspaces
+      CONFLICT_CHECK_ROOT: /srv/conflict-check
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./workspaces:/srv/workspaces
+      - ./conflict-check:/srv/conflict-check
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  db_data:

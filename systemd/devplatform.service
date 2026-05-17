@@ -1,0 +1,15 @@
+[Unit]
+Description=Developer Platform (docker compose)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/srv/devplatform
+EnvironmentFile=/srv/devplatform/.env
+ExecStart=/usr/bin/docker compose -f docker-compose.platform.yml up -d --build
+ExecStop=/usr/bin/docker compose -f docker-compose.platform.yml down
+
+[Install]
+WantedBy=multi-user.target

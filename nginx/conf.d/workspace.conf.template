@@ -1,0 +1,37 @@
+# Per-developer subdomain. Substitute ${SUBDOMAIN}, ${PUBLIC_DOMAIN}, ${UPSTREAM} when rendering.
+#  - ${SUBDOMAIN}     e.g. "dev1"
+#  - ${PUBLIC_DOMAIN} e.g. "yourdomain.com"
+#  - ${UPSTREAM}      e.g. "127.0.0.1:8081"
+#                     The platform binds each workspace to a unique loopback host port
+#                     (see Admin → Workspaces → "Nginx upstream" column).
+#
+# Render one file per workspace, drop into /etc/nginx/conf.d, then `sudo nginx -s reload`.
+
+server {
+    listen 80;
+    server_name ${SUBDOMAIN}.${PUBLIC_DOMAIN};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${SUBDOMAIN}.${PUBLIC_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${SUBDOMAIN}.${PUBLIC_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${SUBDOMAIN}.${PUBLIC_DOMAIN}/privkey.pem;
+
+    client_max_body_size 25m;
+
+    location / {
+        proxy_pass         http://${UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   Upgrade           $http_upgrade;
+        proxy_set_header   Connection        "upgrade";
+        proxy_read_timeout 86400s;   # long-lived websockets for code-server
+        proxy_send_timeout 86400s;
+    }
+}
