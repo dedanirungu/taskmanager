@@ -21,14 +21,16 @@ EMAIL="${CERTBOT_EMAIL:-admin@$(hostname -d 2>/dev/null || echo example.com)}"
 
 for DOMAIN in "$@"; do
   echo "==> issuing cert for $DOMAIN"
-  certbot --nginx \
+  # certonly --nginx uses the running nginx to handle the HTTP-01 challenge
+  # but does NOT try to modify nginx conf files.  We render those ourselves
+  # via render-nginx.sh — having certbot also try to edit them would fail
+  # whenever a fresh subdomain has no pre-existing server block.
+  certbot certonly --nginx \
     --non-interactive \
     --agree-tos \
     --email "$EMAIL" \
-    --redirect \
+    --keep-until-expiring \
     -d "$DOMAIN"
 done
-
-systemctl reload nginx
 echo "==> renewal timer:"
 systemctl list-timers certbot.timer --no-pager || true
